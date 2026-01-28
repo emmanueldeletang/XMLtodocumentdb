@@ -11,10 +11,7 @@ from pymongo import MongoClient
 from typing import Any, Dict, List, Union
 import os
 
-
-# MongoDB (Cosmos DB for MongoDB API) configuration - defaults
-MONGO_CONNECTION_STRING = "mongodb+srv://user:password@account.mongo.cosmos.azure.com/..."
-DATABASE_NAME = "your"
+from config import DEFAULT_CONNECTION_STRING, DEFAULT_DATABASE
 
 
 def get_collection_name_from_file(file_path: str) -> str:
@@ -226,6 +223,11 @@ def process_xml_to_mongodb(
     else:
         print("⚠️  No documents to insert!")
     
+    # Step 5: Delete JSON file after loading
+    if save_json and json_output_path and os.path.exists(json_output_path):
+        os.remove(json_output_path)
+        print(f"🗑️  Deleted JSON file: {json_output_path}")
+    
     print("\n" + "="*60)
     print("✅ PROCESS COMPLETE!")
     print("="*60 + "\n")
@@ -233,32 +235,216 @@ def process_xml_to_mongodb(
     return documents
 
 
+def dict_to_xml_element(data: Union[Dict, str, List, None], tag: str = "item") -> ET.Element:
+    """
+    Recursively convert a dictionary to an XML element.
+    Handles attributes (prefixed with @), text content (#text), and nested elements.
+    """
+    element = ET.Element(tag)
+    
+    if data is None:
+        return element
+    
+    if isinstance(data, str):
+        element.text = data
+        return element
+    
+    if isinstance(data, (int, float, bool)):
+        element.text = str(data)
+        return element
+    
+    if isinstance(data, list):
+        # For lists, create multiple child elements
+        for item in data:
+            child = dict_to_xml_element(item, tag)
+            element.append(child)
+        return element
+    
+    if isinstance(data, dict):
+        for key, value in data.items():
+            # Skip MongoDB _id field
+            if key == '_id':
+                continue
+            
+            # Handle attributes (prefixed with @)
+            if key.startswith('@'):
+                attr_name = key[1:]
+                element.set(attr_name, str(value) if value is not None else "")
+            
+            # Handle text content
+            elif key == '#text':
+                element.text = str(value) if value is not None else ""
+            
+            # Handle _type (used as element tag, skip as we already used it)
+            elif key == '_type':
+                continue
+            
+            # Handle nested elements
+            else:
+                if isinstance(value, list):
+                    # Multiple elements with same tag
+                    for item in value:
+                        child = dict_to_xml_element(item, key)
+                        element.append(child)
+                else:
+                    child = dict_to_xml_element(value, key)
+                    element.append(child)
+    
+    return element
+
+
+def fetch_from_mongodb(
+    collection_name: str,
+    connection_string: str = None,
+    database_name: str = None,
+    query: Dict = None
+) -> List[Dict]:
+    """Fetch documents from MongoDB collection."""
+    connection_string = connection_string or DEFAULT_CONNECTION_STRING
+    database_name = database_name or DEFAULT_DATABASE
+    query = query or {}
+    
+    print(f"🔌 Connecting to MongoDB (DocumentDB)...")
+    client = MongoClient(connection_string)
+    
+    db = client[database_name]
+    collection = db[collection_name]
+    
+    print(f"   Database: {database_name}")
+    print(f"   Collection: {collection_name}")
+    
+    print("📥 Fetching documents...")
+    documents = list(collection.find(query))
+    print(f"   Fetched {len(documents)} documents")
+    
+    client.close()
+    print("   Connection closed.")
+    
+    return documents
+
+
+def export_mongodb_to_xml(
+    collection_name: str,
+    xml_output_path: str = None,
+    connection_string: str = None,
+    database_name: str = None,
+    root_tag: str = "root",
+    query: Dict = None
+):
+    """
+    Export MongoDB collection to XML file.
+    
+    Args:
+        collection_name: MongoDB collection name
+        xml_output_path: Path for XML output file (default: collection_name.xml)
+        connection_string: MongoDB connection string
+        database_name: MongoDB database name
+        root_tag: Tag name for root XML element
+        query: Optional MongoDB query to filter documents
+    """
+    print("\n" + "="*60)
+    print("📤 MONGODB TO XML EXPORTER")
+    print("="*60)
+    
+    # Use defaults
+    connection_string = connection_string or DEFAULT_CONNECTION_STRING
+    database_name = database_name or DEFAULT_DATABASE
+    
+    if not xml_output_path:
+        xml_output_path = f"{collection_name}.xml"
+    
+    print(f"📦 Collection: {collection_name}")
+    print(f"🗃️  Database: {database_name}")
+    print(f"📁 Output: {xml_output_path}")
+    
+    # Step 1: Fetch documents from MongoDB
+    documents = fetch_from_mongodb(collection_name, connection_string, database_name, query)
+    
+    if not documents:
+        print("⚠️  No documents to export!")
+        return None
+    
+    # Step 2: Create XML structure
+    print("🔄 Converting to XML...")
+    root = ET.Element(root_tag)
+    
+    for doc in documents:
+        # Use _type field as element tag, or default to "item"
+        element_tag = doc.get('_type', 'item')
+        child = dict_to_xml_element(doc, element_tag)
+        root.append(child)
+    
+    # Step 3: Write XML file
+    print(f"💾 Saving XML file: {xml_output_path}")
+    tree = ET.ElementTree(root)
+    
+    # Pretty print with indentation
+    ET.indent(tree, space="    ")
+    
+    with open(xml_output_path, 'wb') as f:
+        tree.write(f, encoding='utf-8', xml_declaration=True)
+    
+    print("   XML file saved!")
+    
+    print("\n" + "="*60)
+    print("✅ EXPORT COMPLETE!")
+    print("="*60 + "\n")
+    
+    return xml_output_path
+
+
 # Example usage and CLI interface
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description='Load XML to MongoDB (DocumentDB)')
-    parser.add_argument('xml_file', help='Path to the XML file')
-    parser.add_argument('--connection-string', '-s', default=None,
-                        help='MongoDB connection string (default: built-in connection string)')
-    parser.add_argument('--database', '-d', default=None,
-                        help=f'MongoDB database name (default: {DEFAULT_DATABASE})')
-    parser.add_argument('--collection', '-c', default=None, 
-                        help='MongoDB collection name (default: derived from XML file name)')
-    parser.add_argument('--json-output', '-j', help='Path for JSON output file')
-    parser.add_argument('--no-json', action='store_true', 
-                        help='Skip saving JSON file')
+    parser = argparse.ArgumentParser(description='XML to MongoDB Loader and Exporter')
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
+    
+    # Import command (load XML to MongoDB)
+    import_parser = subparsers.add_parser('import', help='Import XML file to MongoDB')
+    import_parser.add_argument('xml_file', help='Path to the XML file')
+    import_parser.add_argument('--connection-string', '-s', default=None,
+                               help='MongoDB connection string')
+    import_parser.add_argument('--database', '-d', default=None,
+                               help=f'MongoDB database name (default: {DEFAULT_DATABASE})')
+    import_parser.add_argument('--collection', '-c', default=None,
+                               help='MongoDB collection name (default: derived from XML file name)')
+    import_parser.add_argument('--json-output', '-j', help='Path for JSON output file')
+    import_parser.add_argument('--no-json', action='store_true',
+                               help='Skip saving JSON file')
+    
+    # Export command (export MongoDB to XML)
+    export_parser = subparsers.add_parser('export', help='Export MongoDB collection to XML')
+    export_parser.add_argument('collection', help='MongoDB collection name')
+    export_parser.add_argument('--output', '-o', default=None,
+                               help='Path for XML output file (default: collection_name.xml)')
+    export_parser.add_argument('--connection-string', '-s', default=None,
+                               help='MongoDB connection string')
+    export_parser.add_argument('--database', '-d', default=None,
+                               help=f'MongoDB database name (default: {DEFAULT_DATABASE})')
+    export_parser.add_argument('--root-tag', '-r', default='root',
+                               help='Root element tag name (default: root)')
     
     args = parser.parse_args()
     
-    # Use file name as collection name if not specified
-    collection_name = args.collection or get_collection_name_from_file(args.xml_file)
-    
-    process_xml_to_mongodb(
-        xml_file_path=args.xml_file,
-        json_output_path=args.json_output,
-        collection_name=collection_name,
-        connection_string=args.connection_string,
-        database_name=args.database,
-        save_json=not args.no_json
-    )
+    if args.command == 'import':
+        collection_name = args.collection or get_collection_name_from_file(args.xml_file)
+        process_xml_to_mongodb(
+            xml_file_path=args.xml_file,
+            json_output_path=args.json_output,
+            collection_name=collection_name,
+            connection_string=args.connection_string,
+            database_name=args.database,
+            save_json=not args.no_json
+        )
+    elif args.command == 'export':
+        export_mongodb_to_xml(
+            collection_name=args.collection,
+            xml_output_path=args.output,
+            connection_string=args.connection_string,
+            database_name=args.database,
+            root_tag=args.root_tag
+        )
+    else:
+        # Backward compatibility: if no command specified, assume import with positional arg
+        parser.print_help()

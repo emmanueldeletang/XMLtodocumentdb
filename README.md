@@ -1,13 +1,13 @@
-# XML to MongoDB Loader
+# XML to MongoDB Loader & Exporter
 
-A Python script to load XML files into Azure Cosmos DB for MongoDB (DocumentDB).
+A Python script to import XML files into Azure Cosmos DB for MongoDB (DocumentDB) and export collections back to XML.
 
 ## Features
 
-- 📂 **Parse XML files** - Reads any XML file and converts to JSON
+- 📂 **Import XML files** - Reads any XML file and loads into MongoDB
+- 📤 **Export to XML** - Export MongoDB collections back to XML files
 - 📄 **One document per element** - Each child element of the XML root becomes a separate MongoDB document
 - 🏷️ **Auto-naming** - Collection name is derived from the XML file name
-- 💾 **JSON export** - Optionally saves the converted data as a JSON file
 - 🔗 **Azure Cosmos DB** - Connects to Cosmos DB for MongoDB API
 
 ## Prerequisites
@@ -16,42 +16,31 @@ A Python script to load XML files into Azure Cosmos DB for MongoDB (DocumentDB).
 pip install pymongo
 ```
 
-## Configuration
-
-Edit the connection settings in `xml_to_mongodb.py`:
-
-```python
-MONGO_CONNECTION_STRING = "mongodb+srv://user:password@account.mongo.cosmos.azure.com/..."
-DATABASE_NAME = "loto"
-```
-
 ## Usage
 
-### Basic Usage
+### Import XML to MongoDB
 
 ```bash
-python xml_to_mongodb.py <xml_file>
+python xml_to_mongodb.py import <xml_file> [options]
 ```
 
-The collection name will be derived from the file name (e.g., `catalog.xml` → collection `catalog`).
-
-### Examples
+**Examples:**
 
 ```bash
-# Load catalog.xml into 'catalog' collection
-python xml_to_mongodb.py catalog.xml
+# Import catalog.xml into 'catalog' collection
+python xml_to_mongodb.py import catalog.xml
 
-# Specify a custom collection name
-python xml_to_mongodb.py data.xml --collection my_collection
+# Specify database and collection
+python xml_to_mongodb.py import data.xml -d mydb -c my_collection
 
-# Specify output JSON file path
-python xml_to_mongodb.py data.xml --json-output output/data.json
+# Specify connection string
+python xml_to_mongodb.py import data.xml -s "mongodb://user:pass@host:port"
 
 # Skip JSON file creation
-python xml_to_mongodb.py data.xml --no-json
+python xml_to_mongodb.py import data.xml --no-json
 ```
 
-### Command Line Options
+**Import Options:**
 
 | Option | Short | Description |
 |--------|-------|-------------|
@@ -62,31 +51,41 @@ python xml_to_mongodb.py data.xml --no-json
 | `--json-output` | `-j` | Path for JSON output file |
 | `--no-json` | | Skip saving JSON file |
 
-### Examples
+### Export MongoDB to XML
 
 ```bash
-# Load catalog.xml into 'catalog' collection (using default connection)
-python xml_to_mongodb.py catalog.xml
-
-# Specify connection string and database
-python xml_to_mongodb.py data.xml --connection-string "mongodb://user:pass@host:port" --database mydb
-
-# Short form
-python xml_to_mongodb.py data.xml -s "mongodb://user:pass@host:port" -d mydb -c mycollection
-
-# Specify a custom collection name
-python xml_to_mongodb.py data.xml --collection my_collection
-
-# Specify output JSON file path
-python xml_to_mongodb.py data.xml --json-output output/data.json
-
-# Skip JSON file creation
-python xml_to_mongodb.py data.xml --no-json
+python xml_to_mongodb.py export <collection> [options]
 ```
+
+**Examples:**
+
+```bash
+# Export 'catalog' collection to catalog.xml
+python xml_to_mongodb.py export catalog
+
+# Specify output file
+python xml_to_mongodb.py export catalog --output backup.xml
+
+# Specify database and connection
+python xml_to_mongodb.py export catalog -d mydb -s "mongodb://..."
+
+# Custom root tag
+python xml_to_mongodb.py export catalog --root-tag catalog
+```
+
+**Export Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `collection` | | MongoDB collection name (required) |
+| `--output` | `-o` | XML output file path (default: collection_name.xml) |
+| `--connection-string` | `-s` | MongoDB connection string |
+| `--database` | `-d` | MongoDB database name (default: `loto`) |
+| `--root-tag` | `-r` | Root element tag name (default: `root`) |
 
 ## How It Works
 
-### XML to Documents Conversion
+### XML to Documents Conversion (Import)
 
 Given this XML file (`books.xml`):
 
@@ -128,6 +127,13 @@ The script creates **2 separate documents** in MongoDB:
 }
 ```
 
+### Documents to XML Conversion (Export)
+
+When exporting, the documents are converted back to XML:
+- `_type` field determines the element tag name
+- `@` prefixed fields become XML attributes
+- Other fields become child elements
+
 ### Conversion Rules
 
 | XML Feature | JSON Representation |
@@ -138,7 +144,9 @@ The script creates **2 separate documents** in MongoDB:
 | Nested elements | Nested objects |
 | Repeated elements | Arrays |
 
-## Output
+## Output Examples
+
+### Import Output
 
 ```
 ============================================================
@@ -146,12 +154,11 @@ The script creates **2 separate documents** in MongoDB:
 ============================================================
 📁 File: catalog.xml
 📦 Collection: catalog
+🗃️  Database: loto
 📂 Loading XML file: catalog.xml
    Root element: <catalog>
 🔄 Converting XML to individual documents...
    Converted 12 documents!
-💾 Saving to JSON file: catalog.json
-   JSON file saved!
 🔌 Connecting to MongoDB (DocumentDB)...
    Database: loto
    Collection: catalog
@@ -164,6 +171,30 @@ The script creates **2 separate documents** in MongoDB:
 ============================================================
 ```
 
+### Export Output
+
+```
+============================================================
+📤 MONGODB TO XML EXPORTER
+============================================================
+📦 Collection: catalog
+🗃️  Database: loto
+📁 Output: catalog.xml
+🔌 Connecting to MongoDB (DocumentDB)...
+   Database: loto
+   Collection: catalog
+📥 Fetching documents...
+   Fetched 12 documents
+   Connection closed.
+🔄 Converting to XML...
+💾 Saving XML file: catalog.xml
+   XML file saved!
+
+============================================================
+✅ EXPORT COMPLETE!
+============================================================
+```
+
 ## Project Structure
 
 ```
@@ -171,7 +202,7 @@ loto/
 ├── xml_to_mongodb.py      # Main script
 ├── README.md              # This file
 ├── catalog.xml            # Example XML file
-└── catalog.json           # Generated JSON output
+└── backup.xml             # Exported XML file
 ```
 
 ## License
